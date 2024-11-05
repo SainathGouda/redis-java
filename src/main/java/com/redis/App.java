@@ -38,17 +38,20 @@ class Server{
     }
 
     public void run(){
-      try {
-        BufferedReader inputStream = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-        BufferedWriter outputStream = new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream()));
-
+      try(BufferedReader inputStream = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+      BufferedWriter outputStream = new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream()));) {
         String input;
         while((input = inputStream.readLine()) != null){
-        if("ping".equalsIgnoreCase(input)){
-          outputStream.write("+PONG\r\n");
-          //To send the data immediately instead of waiting to be filled
-          outputStream.flush();
-        }
+            if ("PING".equalsIgnoreCase(input)) { 
+              outputStream.write("+PONG\r\n"); 
+            }
+            else if ("ECHO".equalsIgnoreCase(input)) {
+              inputStream.readLine();
+              String message = inputStream.readLine();
+              outputStream.write(String.format("$%d\r\n%s\r\n", message.length(), message));
+            }
+            //To send the data immediately instead of waiting to be filled
+            outputStream.flush();
         }
       } catch (IOException e) {
         System.out.println("IOException: " + e.getMessage());
