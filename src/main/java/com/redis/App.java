@@ -30,7 +30,7 @@ class RedisCommandParser{
   public RedisParser parseCommand() throws IOException{
     String firstLine = inputStream.readLine();
     if(firstLine == null || !firstLine.startsWith("*")){
-      throw new IOException("Invalid Redis command format.");
+      throw new IOException("Responding...");
     }
 
     //Parse number of arguments (*3)
@@ -88,7 +88,13 @@ class Server{
   Socket clientSocket = null;
   int port = 6379;
   // Make same for each thread
-  private static ConcurrentHashMap<String,Cache> cMap = new ConcurrentHashMap<>(); //Thread safe
+  private static ConcurrentHashMap<String,Cache> setMap = new ConcurrentHashMap<>();
+  private static ConcurrentHashMap<String,String> configMap = new ConcurrentHashMap<>();
+
+  public Server(String dir, String dbfilename){
+    configMap.put("dir", dir);
+    configMap.put("dbfilename", dbfilename);
+  }
 
   public void start(){
     try {
@@ -137,7 +143,9 @@ class Server{
                 String message = command.getArguments().get(0);
                 outputStream.write("$" + message.length() + "\r\n" + message + "\r\n");
                 break;
-            
+              case "CONFIG":
+                handleConfigCommand(command, outputStream);
+                break;
               default:
                 outputStream.write("-ERR unknown command\r\n");
                 break;
@@ -163,19 +171,20 @@ class Server{
       long ttl = command.getTTL() == -1 ? -1 : System.currentTimeMillis() + command.getTTL();
 
       if (key != null && value != null) {
-          cMap.put(key, new Cache(value, ttl));
+          setMap.put(key, new Cache(value, ttl));
           outputStream.write("+OK\r\n");
       } else {
           outputStream.write("-ERR wrong number of arguments\r\n");
       }
     }
+
     private void handleGetCommand(RedisParser command, BufferedWriter outputStream) throws IOException {
       String key = command.getKey();
-      Cache cacheItem = cMap.get(key);
+      Cache cacheItem = setMap.get(key);
 
       if (cacheItem != null) {
           if (cacheItem.ttl != -1 && System.currentTimeMillis() > cacheItem.ttl) {
-              cMap.remove(key);
+              setMap.remove(key);
               outputStream.write("$-1\r\n");
           } else {
               outputStream.write("$" + cacheItem.value.length() + "\r\n" + cacheItem.value + "\r\n");
@@ -184,14 +193,39 @@ class Server{
           outputStream.write("$-1\r\n");
       }
     }
+
+    private void handleConfigCommand(RedisParser command, BufferedWriter outputStream) throws IOException{
+      if(command.getCommand() == null || !command.getArguments().get(0).equalsIgnoreCase("GET")){
+        outputStream.write("-ERR invalid CONFIG command\r\n");
+        return;
+      }
+      String param = command.getArguments().get(1);
+      String value = configMap.get(param);
+      if(value != null){
+        outputStream.write("*2\r\n$"+param.length()+"\r\n"+param+"\r\n$"+value.length()+"\r\n"+value+"\r\n");
+      } else {
+        outputStream.write("-ERR unknown parameter for configuration");
+      }
+    }
   }
 }
 
 public class App {
   public static void main(String[] args){
-    System.out.println("Logs from your program will appear here!");
+    String dir = "/tmp/redis-file";
+    String dbfilename = "rdbfile";
 
-    Server server = new Server();
+    for(int i=0;i<args.length;i++){
+      if("--dir".equals(args[i]) && i+1<args.length){
+        dir = args[i+1];
+      }
+      else if("--dbfilename".equals(args[i]) && i+1<args.length){
+        dbfilename = args[i+1];
+      }
+    }
+
+    Server server = new Server(dir, dbfilename);
+    System.out.println("Starting server with dir=" + dir + " and dbfilename=" + dbfilename);
     server.start();
   }
 }
