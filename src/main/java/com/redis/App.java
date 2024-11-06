@@ -8,12 +8,22 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ConcurrentHashMap;
 
+class Cache{
+  String value;
+  long ttl;
+
+  public Cache(String value, long ttl){
+    this.value = value;
+    this.ttl = ttl;
+  }
+}
+
 class Server{
   ServerSocket serverSocket = null;
   Socket clientSocket = null;
   int port = 6379;
   // Make same for each thread
-  private static ConcurrentHashMap<String,String> cMap = new ConcurrentHashMap<>(); //Thread safe
+  private static ConcurrentHashMap<String,Cache> cMap = new ConcurrentHashMap<>(); //Thread safe
 
   public void start(){
     try {
@@ -53,20 +63,33 @@ class Server{
               String message = inputStream.readLine();
               outputStream.write(String.format("$"+message.length()+"\r\n"+message+"\r\n"));
             }
-            else if ("SET".equalsIgnoreCase(input)) { 
+            else if ("SET".equalsIgnoreCase(input)) {
               inputStream.readLine();
               String key = inputStream.readLine();
               inputStream.readLine();
               String value = inputStream.readLine();
-              cMap.put(key, value);
+              long ttl = -1;
+              inputStream.readLine();
+              String px = inputStream.readLine();
+              if("PX".equalsIgnoreCase(px)){
+                inputStream.readLine();
+                ttl = System.currentTimeMillis()+Long.parseLong(inputStream.readLine());
+              }
+              cMap.put(key, new Cache(value,ttl));
               outputStream.write("+OK\r\n");
             }
             else if ("GET".equalsIgnoreCase(input)) { 
               inputStream.readLine();
               String key = inputStream.readLine();
-              String value = cMap.get(key);
-              if(value!=null){
-                outputStream.write("$"+value.length()+"\r\n"+value+"\r\n");
+              Cache cahcheItem = cMap.get(key);
+              if(cahcheItem!=null){
+                if(cahcheItem.ttl!=-1 && System.currentTimeMillis() > cahcheItem.ttl){
+                  cMap.remove(key);
+                  outputStream.write("$-1\r\n");
+                }
+                else{
+                  outputStream.write("$"+cahcheItem.value.length()+"\r\n"+cahcheItem.value+"\r\n");
+                }
               }
               else{
                 outputStream.write("$-1\r\n");
