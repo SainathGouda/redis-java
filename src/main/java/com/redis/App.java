@@ -6,11 +6,14 @@ import java.io.OutputStreamWriter;
 import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ConcurrentHashMap;
 
 class Server{
   ServerSocket serverSocket = null;
   Socket clientSocket = null;
   int port = 6379;
+  // Make same for each thread
+  private static ConcurrentHashMap<String,String> cMap = new ConcurrentHashMap<>(); //Thread safe
 
   public void start(){
     try {
@@ -48,7 +51,26 @@ class Server{
             else if ("ECHO".equalsIgnoreCase(input)) {
               inputStream.readLine();
               String message = inputStream.readLine();
-              outputStream.write(String.format("$%d\r\n%s\r\n", message.length(), message));
+              outputStream.write(String.format("$"+message.length()+"\r\n"+message+"\r\n"));
+            }
+            else if ("SET".equalsIgnoreCase(input)) { 
+              inputStream.readLine();
+              String key = inputStream.readLine();
+              inputStream.readLine();
+              String value = inputStream.readLine();
+              cMap.put(key, value);
+              outputStream.write("+OK\r\n");
+            }
+            else if ("GET".equalsIgnoreCase(input)) { 
+              inputStream.readLine();
+              String key = inputStream.readLine();
+              String value = cMap.get(key);
+              if(value!=null){
+                outputStream.write("$"+value.length()+"\r\n"+value+"\r\n");
+              }
+              else{
+                outputStream.write("$-1\r\n");
+              }
             }
             //To send the data immediately instead of waiting to be filled
             outputStream.flush();
