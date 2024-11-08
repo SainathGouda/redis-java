@@ -1,9 +1,5 @@
 package com.redis;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
@@ -94,6 +90,122 @@ class Server{
   public Server(String dir, String dbfilename){
     configMap.put("dir", dir);
     configMap.put("dbfilename", dbfilename);
+    loadRDBFile(dir, dbfilename);
+  }
+
+  private void loadRDBFile(String dir, String dbfilename){
+    File rdbFile = new File(dir, dbfilename);
+    if(!rdbFile.exists()){
+      System.out.println("RDB file does not exist, starting with an empty dataset.");
+      return;
+    }
+
+    try(DataInputStream inputStream = new DataInputStream(new FileInputStream(rdbFile))) {
+      // Header 0x
+      byte[] header = new byte[9];
+      inputStream.readFully(header); //For safety (Corrupted bits)
+      String headerStr = new String(header);
+      if(!headerStr.equals("REDIS0011")){
+        System.out.println("Invalid RDB file version");
+        return;
+      }
+
+      // Metadata (Skip) 0xFA
+      while (true) {
+        int sectionType = inputStream.readUnsignedByte();
+        if(sectionType == 0xFE){
+          break;
+        }
+        else if(sectionType == 0xFA){
+          readString(inputStream); // String encoded name
+          readString(inputStream); // String encoded value
+        }
+      }
+
+      // Database Section
+      boolean continueReading = true;
+      while (continueReading) {
+        int sectionType = inputStream.readUnsignedByte();
+
+        switch (sectionType) {
+          case 0xFE: // Indicates the start of a database subsection.
+            int dbIndex = decodeSize(inputStream);
+            break;
+          case 0xFB: // Indicates that hash table size information follows.
+            int kvTableSize = decodeSize(inputStream);
+            int expiryTableSize = decodeSize(inputStream);
+            break;
+          case 0x00:  // String key-value pair
+            String key = readString(inputStream);
+            String value = readString(inputStream);
+            setMap.put(key, new Cache(value, -1));
+            System.out.println("Loaded key from RDB: " + key);
+            break;
+          case 0xFD:  // Key with expiry (seconds)
+            String expiringKey = readString(inputStream);
+            String expiringValue = readString(inputStream);
+            long expiryTTL = decodeExpiry(inputStream, 4);
+            setMap.put(expiringKey, new Cache(expiringValue, expiryTTL * 1000));
+            System.out.println("Loaded expiring key from RDB: " + expiringKey);
+            break;
+          case 0xFC:  // Key with expiry (milliseconds)
+            String msExpiringKey = readString(inputStream);
+            String msExpiringValue = readString(inputStream);
+            long msExpiryTTL = decodeExpiry(inputStream, 8);
+            setMap.put(msExpiringKey, new Cache(msExpiringValue, msExpiryTTL));
+            System.out.println("Loaded expiring key from RDB: " + msExpiringKey);
+            break;
+          case 0xFF:  // End of file section
+            continueReading = false;
+            break;
+          default:
+            System.out.println("Unknown section type: "+sectionType);
+            continueReading = false;
+            break;
+        }
+      }
+
+    } catch (IOException e) {
+      System.out.println("Error in reading RDB file: " + e.getMessage());
+    }
+  }
+
+  private int decodeSize(DataInputStream inputStream) throws IOException{
+    int firstByte = inputStream.readUnsignedByte();
+    int size;
+
+    // C =>1100000 so anding gives first two bytes
+    if ((firstByte & 0xC0) == 0x00) { // 0b00   
+        size = firstByte & 0x3F;  // First two bits are 0b00, last 6 bits are the size
+    } else if ((firstByte & 0xC0) == 0x40) { // 0x40 => 0b01
+        int secondByte = inputStream.readUnsignedByte();
+        size = ((firstByte & 0x3F) << 8) | secondByte;  // 14-bit size in big-endian (as last 6 bits are size so we need to move them by 8 bits to make space for second byte i.e. in total 14)
+    } else if ((firstByte & 0xC0) == 0x80) { // 0b10
+        size = inputStream.readInt();  // 32-bit size
+    } else {
+        throw new IOException("Unsupported encoding format.");
+    }
+
+    return size;
+  }
+
+  private String readString(DataInputStream inputStream) throws IOException{
+    int size = decodeSize(inputStream);
+    byte[] bytes = new byte[size];
+    inputStream.readFully(bytes);
+    return new String(bytes);
+  }
+
+  private long decodeExpiry(DataInputStream inputStream, int size) throws IOException{
+    if (size==4) {
+      return Integer.toUnsignedLong(inputStream.readInt());
+    }
+    else if(size==8){
+      long partOne = Integer.toUnsignedLong(inputStream.readInt());
+      long partTwo = Integer.toUnsignedLong(inputStream.readInt());
+      return (partOne << 32) | partOne;
+    }
+    throw new IOException("Invalid expiry size");
   }
 
   public void start(){
@@ -132,19 +244,31 @@ class Server{
             switch (command.getCommand()) {
               case "PING":
                 outputStream.write("+PONG\r\n");
+                // echo -e "*1\r\n$4\r\nPING\r\n" | nc localhost 6379
                 break;
               case "SET":
                 handleSetCommand(command, outputStream);
+                // echo -e "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n" | nc localhost 6379
+                // echo -e "*5\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n$2\r\nPX\r\n$4\r\n1000\r\n" | nc localhost 6379
                 break;
               case "GET":
                 handleGetCommand(command, outputStream);
+                // echo -e "*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n" | nc localhost 6379
+                // echo -e "*2\r\n$3\r\nGET\r\n$7\r\nunknown\r\n" | nc localhost 6379
                 break;
               case "ECHO":
                 String message = command.getArguments().get(0);
                 outputStream.write("$" + message.length() + "\r\n" + message + "\r\n");
+                // echo -e "*2\r\n$4\r\nECHO\r\n$13\r\nHello, Redis!\r\n" | nc localhost 6379
                 break;
               case "CONFIG":
                 handleConfigCommand(command, outputStream);
+                // echo -e "*2\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$3\r\ndir\r\n" | nc localhost 6379
+                // echo -e "*2\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$10\r\ndbfilename\r\n" | nc localhost 6379
+                break;
+              case "KEYS":
+                handleKeysCommand(outputStream);
+                // echo -e "*2\r\n$4\r\nKEYS\r\n$1\r\n*\r\n" | nc localhost 6379
                 break;
               default:
                 outputStream.write("-ERR unknown command\r\n");
@@ -207,6 +331,13 @@ class Server{
         outputStream.write("-ERR unknown parameter for configuration");
       }
     }
+
+    private void handleKeysCommand(BufferedWriter outputStream) throws IOException{
+      outputStream.write("*"+setMap.size()+"\r\n");
+      for (String key : setMap.keySet()) {
+        outputStream.write("$"+key.length()+"\r\n"+key+"\r\n");
+      }
+    }
   }
 }
 
@@ -223,6 +354,9 @@ public class App {
         dbfilename = args[i+1];
       }
     }
+    // To make files for testing
+    // mkdir -p /tmp/redis-file
+    // java -cp . App --dir /tmp/redis-file --dbfilename rdbfile
 
     Server server = new Server(dir, dbfilename);
     System.out.println("Starting server with dir=" + dir + " and dbfilename=" + dbfilename);
