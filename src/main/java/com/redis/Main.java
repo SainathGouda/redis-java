@@ -131,7 +131,7 @@ class Server{
         if (type == 0xFC) {
           ByteBuffer buffer = ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
           buffer.put(inputStream.readNBytes(Long.BYTES));
-          buffer.flip();
+          buffer.flip(); // From write to read mode
           ttl = buffer.getLong();
           
           // Read the next byte for the actual value type
@@ -235,6 +235,10 @@ class Server{
                 handleKeysCommand(outputStream);
                 // echo -e "*2\r\n$4\r\nKEYS\r\n$1\r\n*\r\n" | nc localhost 6379
                 break;
+              case "TYPE":
+                handleTypeCommand(command, outputStream);
+                // echo -e "*2\r\n$4\r\nTYPE\r\n$3\r\nkey\r\n" | nc localhost 6379
+                break;
               default:
                 outputStream.write("-ERR unknown command\r\n");
                 break;
@@ -306,6 +310,22 @@ class Server{
       outputStream.write("*"+rdbMap.size()+"\r\n");
       for(String key : rdbMap.keySet()){
         outputStream.write("$" + key.length() + "\r\n" + key + "\r\n");
+        outputStream.flush();
+      }
+    }
+
+    private void handleTypeCommand(RedisParser command, BufferedWriter outputStream) throws IOException {
+      String key = command.getKey();
+      Cache cacheItem = setMap.get(key);
+      if(cacheItem == null){
+        cacheItem = rdbMap.get(key);
+      }
+      if(cacheItem == null){
+        outputStream.write("+none\r\n");
+        outputStream.flush();
+      }
+      else{
+        outputStream.write("+string\r\n");
         outputStream.flush();
       }
     }
