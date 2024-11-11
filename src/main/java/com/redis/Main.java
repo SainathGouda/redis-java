@@ -39,7 +39,7 @@ class RedisCommandParser{
 
     //Loading each argument
     for(int i=0;i<numOfArgs;i++){
-      String argLen = inputStream.readLine(); // ($3)
+      inputStream.readLine(); // ($3) length of argument
       String argument = inputStream.readLine();
       arguments.add(argument);
     } 
@@ -120,20 +120,26 @@ class Server{
         }
       }
 
-      int type = inputStream.read();
-      int len = getLen(inputStream);
-      byte[] keyBytes = new byte[len];
-      inputStream.read(keyBytes);
-      String parsedKey = new String(keyBytes, StandardCharsets.UTF_8);
+      while ((read=inputStream.read()) != -1) {
+        int type = read;
+        if(type == 0xFF){
+          break;
+        }
 
-      int valueLen = getLen(inputStream);
-      byte[] valueBytes = new byte[valueLen];
-      inputStream.read(valueBytes);
-      String parsedValue = new String(valueBytes, StandardCharsets.UTF_8);
+        int keyLen = getLen(inputStream);
+        byte[] keyBytes = new byte[keyLen];
+        inputStream.read(keyBytes);
+        String parsedKey = new String(keyBytes, StandardCharsets.UTF_8);
 
-      long ttl = -1;
+        int valueLen = getLen(inputStream);
+        byte[] valueBytes = new byte[valueLen];
+        inputStream.read(valueBytes);
+        String parsedValue = new String(valueBytes, StandardCharsets.UTF_8);
 
-      rdbMap.put(parsedKey, new Cache(parsedValue, ttl));
+        long ttl = -1;
+
+        rdbMap.put(parsedKey, new Cache(parsedValue, ttl));
+      }
     } catch (IOException e) {
       System.out.println("Error reading RDB file: " + e.getMessage());
     }
@@ -286,8 +292,9 @@ class Server{
     }
 
     private void handleKeysCommand(BufferedWriter outputStream) throws IOException {
+      outputStream.write("*"+rdbMap.size()+"\r\n");
       for(String key : rdbMap.keySet()){
-        outputStream.write("*1\r\n$" + key.length() + "\r\n" + key + "\r\n");
+        outputStream.write("$" + key.length() + "\r\n" + key + "\r\n");
         outputStream.flush();
       }
     }
