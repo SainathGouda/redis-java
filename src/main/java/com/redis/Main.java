@@ -4,6 +4,7 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -126,6 +127,17 @@ class Server{
           break;
         }
 
+        long ttl = -1;
+        if (type == 0xFC) {
+          ByteBuffer buffer = ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+          buffer.put(inputStream.readNBytes(Long.BYTES));
+          buffer.flip();
+          ttl = buffer.getLong();
+          
+          // Read the next byte for the actual value type
+          type = inputStream.read();
+      }
+
         int keyLen = getLen(inputStream);
         byte[] keyBytes = new byte[keyLen];
         inputStream.read(keyBytes);
@@ -135,8 +147,6 @@ class Server{
         byte[] valueBytes = new byte[valueLen];
         inputStream.read(valueBytes);
         String parsedValue = new String(valueBytes, StandardCharsets.UTF_8);
-
-        long ttl = -1;
 
         rdbMap.put(parsedKey, new Cache(parsedValue, ttl));
       }
@@ -268,6 +278,7 @@ class Server{
       if (cacheItem != null) {
         if (cacheItem.ttl != -1 && System.currentTimeMillis() > cacheItem.ttl) {
           setMap.remove(key);
+          rdbMap.remove(key);
           outputStream.write("$-1\r\n");
         } else {
           outputStream.write("$" + cacheItem.value.length() + "\r\n" + cacheItem.value + "\r\n");
