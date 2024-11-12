@@ -131,6 +131,7 @@ class Server{
   private static ConcurrentHashMap<String,String> configMap = new ConcurrentHashMap<>();
   private static ConcurrentHashMap<String,Cache> rdbMap = new ConcurrentHashMap<>();
   private static ConcurrentHashMap<String,StreamCache> streamMap = new ConcurrentHashMap<>();
+  private static String xaddIdTop = "0-0";
 
   public Server(String dir, String dbfilename){
     configMap.put("dir", dir);
@@ -378,9 +379,33 @@ class Server{
       String entryId = command.getStreamEntryId();
       List<String> streamEntries = command.getStreamEntries();
 
+      String[] xaddId = entryId.split("-");
+      int millisecondsTime = Integer.parseInt(xaddId[0]);
+      int sequenceNumber = Integer.parseInt(xaddId[1]);
+      String[] xaddIdT = xaddIdTop.split("-");
+      int millisecondsTimeTop = Integer.parseInt(xaddIdT[0]);
+      int sequenceNumberTop = Integer.parseInt(xaddIdT[1]);
+
+      if(millisecondsTime <= 0 && sequenceNumber <=0){
+        outputStream.write("-ERR The ID specified in XADD must be greater than 0-0\r\n");
+        outputStream.flush();
+        return;
+      }
+      else if(millisecondsTime < millisecondsTimeTop){
+        outputStream.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
+        outputStream.flush();
+        return;
+      }
+      else if(millisecondsTime == millisecondsTimeTop && sequenceNumber<=sequenceNumberTop){
+        outputStream.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
+        outputStream.flush();
+        return;
+      }
+
       StreamCache streamCache = streamMap.getOrDefault(streamKey, new StreamCache());
       streamCache.addEntry(entryId, streamEntries);
       streamMap.put(streamKey, streamCache);
+      xaddIdTop = entryId;
 
       outputStream.write("$"+entryId.length()+"\r\n"+entryId+"\r\n");
       outputStream.flush();
