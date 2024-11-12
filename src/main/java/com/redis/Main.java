@@ -21,6 +21,36 @@ class Cache{
   }
 }
 
+class StreamCache{
+  private List<StreamEntry> entries = new ArrayList<>();
+
+  public void addEntry(String id, List<String> keyValuePairs){
+    entries.add(new StreamEntry(id, keyValuePairs));
+  }
+
+  public List<StreamEntry> getEntries(){
+    return entries;
+  }
+}
+
+class StreamEntry{
+  private String id;
+  private List<String> keyValuePairs;
+
+  public StreamEntry(String id, List<String> keyValuePairs){
+    this.id = id;
+    this.keyValuePairs = keyValuePairs;
+  }
+
+  public String getId(){
+    return id;
+  }
+
+  public List<String> getKeyValuePairs(){
+    return keyValuePairs;
+  }
+}
+
 class RedisCommandParser{
   private BufferedReader inputStream;
 
@@ -82,6 +112,14 @@ class RedisParser{
     }
     return -1;
   }
+
+  public String getStreamEntryId(){
+    return arguments.size()>2 ? arguments.get(2) : null;
+  }
+
+  public List<String> getStreamEntries(){
+    return arguments.size()>3 ? arguments.subList(3, arguments.size()) : new ArrayList<>();
+  }
 }
 
 class Server{
@@ -92,6 +130,7 @@ class Server{
   private static ConcurrentHashMap<String,Cache> setMap = new ConcurrentHashMap<>();
   private static ConcurrentHashMap<String,String> configMap = new ConcurrentHashMap<>();
   private static ConcurrentHashMap<String,Cache> rdbMap = new ConcurrentHashMap<>();
+  private static ConcurrentHashMap<String,StreamCache> streamMap = new ConcurrentHashMap<>();
 
   public Server(String dir, String dbfilename){
     configMap.put("dir", dir);
@@ -239,6 +278,9 @@ class Server{
                 handleTypeCommand(command, outputStream);
                 // echo -e "*2\r\n$4\r\nTYPE\r\n$3\r\nkey\r\n" | nc localhost 6379
                 break;
+              case "XADD":
+                handleXADDCommand(command, outputStream);
+                break;
               default:
                 outputStream.write("-ERR unknown command\r\n");
                 break;
@@ -316,18 +358,32 @@ class Server{
 
     private void handleTypeCommand(RedisParser command, BufferedWriter outputStream) throws IOException {
       String key = command.getKey();
-      Cache cacheItem = setMap.get(key);
-      if(cacheItem == null){
-        cacheItem = rdbMap.get(key);
-      }
-      if(cacheItem == null){
-        outputStream.write("+none\r\n");
-        outputStream.flush();
-      }
-      else{
+
+      if(setMap.containsKey(key) || rdbMap.containsKey(key)){
         outputStream.write("+string\r\n");
         outputStream.flush();
       }
+      else if(streamMap.containsKey(key)){
+        outputStream.write("+stream\r\n");
+        outputStream.flush();
+      }
+      else{
+        outputStream.write("+none\r\n");
+        outputStream.flush();
+      }
+    }
+
+    private void handleXADDCommand(RedisParser command, BufferedWriter outputStream) throws IOException {
+      String streamKey = command.getKey();
+      String entryId = command.getStreamEntryId();
+      List<String> streamEntries = command.getStreamEntries();
+
+      StreamCache streamCache = streamMap.getOrDefault(streamKey, new StreamCache());
+      streamCache.addEntry(entryId, streamEntries);
+      streamMap.put(streamKey, streamCache);
+
+      outputStream.write("$"+entryId.length()+"\r\n"+entryId+"\r\n");
+      outputStream.flush();
     }
   }
 }
