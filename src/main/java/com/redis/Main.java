@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,11 +30,11 @@ class StreamCache{
     entries.put(entryId, entry);
   }
 
-  public int getLastMillisecondsTime(){
+  public long getLastMillisecondsTime(){
     if(entries.isEmpty()){
       return -1;
     }
-    return Integer.parseInt(entries.lastKey().split("-")[0]);
+    return Long.parseLong(entries.lastKey().split("-")[0]);
   }
 
   public int getLastSequenceNumber(){
@@ -43,7 +44,7 @@ class StreamCache{
     return Integer.parseInt(entries.lastKey().split("-")[1]);
   }
 
-  public int getLastSequenceNumberForMs(int milliseconds){
+  public int getLastSequenceNumberForMs(long milliseconds){
     String preSequenceNumberPart = milliseconds + "-";
     return entries.descendingMap().entrySet().stream()
             .filter(entry -> entry.getKey().startsWith(preSequenceNumberPart))
@@ -385,34 +386,44 @@ class Server{
       List<String> streamEntries = command.getStreamEntries();
       StreamCache streamCache = streamMap.getOrDefault(streamKey, new StreamCache());
 
-      String[] xaddId = entryId.split("-");
-      int millisecondsTime = Integer.parseInt(xaddId[0]);
+      long millisecondsTime;
       int sequenceNumber;
 
-      if(xaddId[1].equals("*")){
-        int lastSequenceNumber = streamCache.getLastSequenceNumberForMs(millisecondsTime);
+      if (entryId.equals("*")) {
+        millisecondsTime = System.currentTimeMillis();
+        sequenceNumber = 0;
 
-        if(lastSequenceNumber >= 0){
-          sequenceNumber = lastSequenceNumber + 1;
+        if (Objects.equals(streamCache.getLastMillisecondsTime(), millisecondsTime)) {
+          sequenceNumber = streamCache.getLastSequenceNumberForMs(millisecondsTime) + 1;
+        }
+      } else {
+        String[] xaddId = entryId.split("-");
+        millisecondsTime = Integer.parseInt(xaddId[0]);
+        if(xaddId[1].equals("*")){
+          int lastSequenceNumber = streamCache.getLastSequenceNumberForMs(millisecondsTime);
+
+          if(lastSequenceNumber >= 0){
+            sequenceNumber = lastSequenceNumber + 1;
+          }
+          else{
+            sequenceNumber = (millisecondsTime == 0) ? 1 : 0;
+          }
         }
         else{
-          sequenceNumber = (millisecondsTime == 0) ? 1 : 0;
+          sequenceNumber = Integer.parseInt(xaddId[1]);
         }
-      }
-      else{
-        sequenceNumber = Integer.parseInt(xaddId[1]);
-      }
 
-      if(millisecondsTime <= 0 && sequenceNumber <=0){
-        outputStream.write("-ERR The ID specified in XADD must be greater than 0-0\r\n");
-        outputStream.flush();
-        return;
-      }
+        if(millisecondsTime <= 0 && sequenceNumber <=0){
+          outputStream.write("-ERR The ID specified in XADD must be greater than 0-0\r\n");
+          outputStream.flush();
+          return;
+        }
 
-      if(millisecondsTime < streamCache.getLastMillisecondsTime() || millisecondsTime == streamCache.getLastMillisecondsTime() && sequenceNumber <= streamCache.getLastSequenceNumber()){
-        outputStream.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
-        outputStream.flush();
-        return;
+        if(millisecondsTime < streamCache.getLastMillisecondsTime() || millisecondsTime == streamCache.getLastMillisecondsTime() && sequenceNumber <= streamCache.getLastSequenceNumber()){
+          outputStream.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
+          outputStream.flush();
+          return;
+        }
       }
 
       entryId = millisecondsTime+"-"+sequenceNumber;
