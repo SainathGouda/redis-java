@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 class Cache{
@@ -22,32 +23,37 @@ class Cache{
 }
 
 class StreamCache{
-  private List<StreamEntry> entries = new ArrayList<>();
+  private TreeMap<String, List<String>> entries = new TreeMap<>();
 
-  public void addEntry(String id, List<String> keyValuePairs){
-    entries.add(new StreamEntry(id, keyValuePairs));
+  public void addEntry(String entryId, List<String> entry){
+    entries.put(entryId, entry);
   }
 
-  public List<StreamEntry> getEntries(){
+  public int getLastMillisecondsTime(){
+    if(entries.isEmpty()){
+      return -1;
+    }
+    return Integer.parseInt(entries.lastKey().split("-")[0]);
+  }
+
+  public int getLastSequenceNumber(){
+    if(entries.isEmpty()){
+      return -1;
+    }
+    return Integer.parseInt(entries.lastKey().split("-")[1]);
+  }
+
+  public int getLastSequenceNumberForMs(int milliseconds){
+    String preSequenceNumberPart = milliseconds + "-";
+    return entries.descendingMap().entrySet().stream()
+            .filter(entry -> entry.getKey().startsWith(preSequenceNumberPart))
+            .findFirst()
+            .map(entry -> Integer.parseInt(entry.getKey().split("-")[1]))
+            .orElse(-1);
+  }
+
+  public TreeMap<String, List<String>> getEntries(){
     return entries;
-  }
-}
-
-class StreamEntry{
-  private String id;
-  private List<String> keyValuePairs;
-
-  public StreamEntry(String id, List<String> keyValuePairs){
-    this.id = id;
-    this.keyValuePairs = keyValuePairs;
-  }
-
-  public String getId(){
-    return id;
-  }
-
-  public List<String> getKeyValuePairs(){
-    return keyValuePairs;
   }
 }
 
@@ -131,7 +137,6 @@ class Server{
   private static ConcurrentHashMap<String,String> configMap = new ConcurrentHashMap<>();
   private static ConcurrentHashMap<String,Cache> rdbMap = new ConcurrentHashMap<>();
   private static ConcurrentHashMap<String,StreamCache> streamMap = new ConcurrentHashMap<>();
-  private static String xaddIdTop = "0-0";
 
   public Server(String dir, String dbfilename){
     configMap.put("dir", dir);
@@ -378,34 +383,41 @@ class Server{
       String streamKey = command.getKey();
       String entryId = command.getStreamEntryId();
       List<String> streamEntries = command.getStreamEntries();
+      StreamCache streamCache = streamMap.getOrDefault(streamKey, new StreamCache());
 
       String[] xaddId = entryId.split("-");
       int millisecondsTime = Integer.parseInt(xaddId[0]);
-      int sequenceNumber = Integer.parseInt(xaddId[1]);
-      String[] xaddIdT = xaddIdTop.split("-");
-      int millisecondsTimeTop = Integer.parseInt(xaddIdT[0]);
-      int sequenceNumberTop = Integer.parseInt(xaddIdT[1]);
+      int sequenceNumber;
+
+      if(xaddId[1].equals("*")){
+        int lastSequenceNumber = streamCache.getLastSequenceNumberForMs(millisecondsTime);
+
+        if(lastSequenceNumber >= 0){
+          sequenceNumber = lastSequenceNumber + 1;
+        }
+        else{
+          sequenceNumber = (millisecondsTime == 0) ? 1 : 0;
+        }
+      }
+      else{
+        sequenceNumber = Integer.parseInt(xaddId[1]);
+      }
 
       if(millisecondsTime <= 0 && sequenceNumber <=0){
         outputStream.write("-ERR The ID specified in XADD must be greater than 0-0\r\n");
         outputStream.flush();
         return;
       }
-      else if(millisecondsTime < millisecondsTimeTop){
-        outputStream.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
-        outputStream.flush();
-        return;
-      }
-      else if(millisecondsTime == millisecondsTimeTop && sequenceNumber<=sequenceNumberTop){
+
+      if(millisecondsTime < streamCache.getLastMillisecondsTime() || millisecondsTime == streamCache.getLastMillisecondsTime() && sequenceNumber <= streamCache.getLastSequenceNumber()){
         outputStream.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
         outputStream.flush();
         return;
       }
 
-      StreamCache streamCache = streamMap.getOrDefault(streamKey, new StreamCache());
+      entryId = millisecondsTime+"-"+sequenceNumber;
       streamCache.addEntry(entryId, streamEntries);
       streamMap.put(streamKey, streamCache);
-      xaddIdTop = entryId;
 
       outputStream.write("$"+entryId.length()+"\r\n"+entryId+"\r\n");
       outputStream.flush();
