@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
-
+ 
 class Cache{
   String value;
   long ttl;
@@ -288,6 +288,9 @@ class Server{
               case "XADD":
                 handleXADDCommand(command, outputStream);
                 break;
+              case "XRANGE":
+                handleXRANGECommand(command, outputStream);
+                break;
               default:
                 outputStream.write("-ERR unknown command\r\n");
                 break;
@@ -431,6 +434,40 @@ class Server{
       streamMap.put(streamKey, streamCache);
 
       outputStream.write("$"+entryId.length()+"\r\n"+entryId+"\r\n");
+      outputStream.flush();
+    }
+
+    private void handleXRANGECommand(RedisParser command, BufferedWriter outputStream) throws IOException {
+      String streamKey = command.getKey();
+      String startId = command.getArguments().get(1);
+      String endId = command.getArguments().get(2);
+
+      StreamCache streamCache = streamMap.get(streamKey);
+      if (streamCache == null) {
+        outputStream.write("*0\r\n");
+        outputStream.flush();
+        return;
+      }
+
+      startId = startId.contains("-") ? startId : startId + "-0";
+      endId = endId.contains("-") ? endId : endId + "-*";
+
+      if(endId.endsWith("-*")){
+        long endTimeMs = Long.parseLong(endId.split("-")[0]);
+        int lastSequenceNumber = streamCache.getLastSequenceNumberForMs(endTimeMs);
+        endId = endTimeMs + "-" + lastSequenceNumber;
+      }
+
+      TreeMap<String, List<String>> entries = new TreeMap<>(streamCache.getEntries().subMap(startId, true, endId, true)); // boolean for including end boundaries
+
+      outputStream.write("*"+entries.size()+"\r\n");
+      for(var entry : entries.entrySet()){
+        outputStream.write("*2\r\n$" + entry.getKey().length() + "\r\n" + entry.getKey() + "\r\n");
+        outputStream.write("*"+entry.getValue().size()+"\r\n");
+        for (String value : entry.getValue()) {
+          outputStream.write("$"+value.length()+"\r\n"+value+"\r\n");
+        }
+      }
       outputStream.flush();
     }
   }
