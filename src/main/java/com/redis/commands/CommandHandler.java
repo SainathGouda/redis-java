@@ -165,16 +165,22 @@ public class CommandHandler {
         return;
       }
 
+      TreeMap<String, List<String>> entries;
       startId = startId.contains("-") ? startId : startId + "-0";
-      endId = endId.contains("-") ? endId : endId + "-*";
-
-      if(endId.endsWith("-*")){
-        long endTimeMs = Long.parseLong(endId.split("-")[0]);
-        int lastSequenceNumber = streamCache.getLastSequenceNumberForMs(endTimeMs);
-        endId = endTimeMs + "-" + lastSequenceNumber;
+      if(endId.equals("+")){
+        entries = new TreeMap<>(streamCache.getEntries().tailMap(startId, true));
       }
+      else{
+        endId = endId.contains("-") ? endId : endId + "-*";
 
-      TreeMap<String, List<String>> entries = new TreeMap<>(streamCache.getEntries().subMap(startId, true, endId, true)); // boolean for including end boundaries
+        if(endId.endsWith("-*")){
+            long endTimeMs = Long.parseLong(endId.split("-")[0]);
+            int lastSequenceNumber = streamCache.getLastSequenceNumberForMs(endTimeMs);
+            endId = endTimeMs + "-" + lastSequenceNumber;
+          }
+
+        entries = new TreeMap<>(streamCache.getEntries().subMap(startId, true, endId, true)); // boolean for including end boundaries
+      }
 
       outputStream.write("*"+entries.size()+"\r\n");
       for(var entry : entries.entrySet()){
