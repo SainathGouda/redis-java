@@ -168,6 +168,7 @@ public class CommandHandler {
       TreeMap<String, List<String>> entries;
       startId = startId.contains("-") ? startId : startId + "-0";
       if(endId.equals("+")){
+        // Get entries with IDs greater than the specified entry ID
         entries = new TreeMap<>(streamCache.getEntries().tailMap(startId, true));
       }
       else{
@@ -192,4 +193,37 @@ public class CommandHandler {
       }
       outputStream.flush();
     }
+
+    public void handleXREADCommand(RedisParser command, BufferedWriter outputStream) throws IOException {
+      String streamKey = command.getArguments().get(1);
+      String entryId = command.getArguments().get(2);
+  
+      StreamCache streamCache = streamMap.get(streamKey);
+      if (streamCache == null) {
+          outputStream.write("*0\r\n");
+          outputStream.flush();
+          return;
+      }
+  
+      entryId = entryId.contains("-") ? entryId : entryId + "-0";
+  
+      // Get entries with IDs greater than the specified entry ID
+      TreeMap<String, List<String>> entries = new TreeMap<>(streamCache.getEntries().tailMap(entryId, false));
+  
+      outputStream.write("*1\r\n");
+      outputStream.write("*2\r\n"); // Stream key and its entries
+      outputStream.write("$" + streamKey.length() + "\r\n" + streamKey + "\r\n");
+      outputStream.write("*" + entries.size() + "\r\n");
+  
+      for (var entry : entries.entrySet()) {
+          outputStream.write("*2\r\n");
+          outputStream.write("$" + entry.getKey().length() + "\r\n" + entry.getKey() + "\r\n");
+          outputStream.write("*" + entry.getValue().size() + "\r\n");
+          for (String value : entry.getValue()) {
+              outputStream.write("$" + value.length() + "\r\n" + value + "\r\n");
+          }
+      }
+      
+      outputStream.flush();
+  }  
 }

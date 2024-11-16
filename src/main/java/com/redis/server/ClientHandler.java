@@ -67,6 +67,9 @@ public class ClientHandler extends Thread{
               case "XRANGE":
                 commandHandler.handleXRANGECommand(command, outputStream);
                 break;
+              case "XREAD":
+                commandHandler.handleXREADCommand(command, outputStream);
+                break;
               default:
                 outputStream.write("-ERR unknown command\r\n");
                 break;
