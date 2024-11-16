@@ -195,35 +195,62 @@ public class CommandHandler {
     }
 
     public void handleXREADCommand(RedisParser command, BufferedWriter outputStream) throws IOException {
-      String streamKey = command.getArguments().get(1);
-      String entryId = command.getArguments().get(2);
-  
-      StreamCache streamCache = streamMap.get(streamKey);
-      if (streamCache == null) {
-          outputStream.write("*0\r\n");
+      List<String> arguments = command.getArguments();
+      int streamsIndex = arguments.indexOf("streams");
+      
+      if (streamsIndex == -1 || streamsIndex + 1 >= arguments.size()) {
+          // Invalid command format
+          outputStream.write("-ERR Missing or invalid streams argument\r\n");
           outputStream.flush();
           return;
       }
-  
-      entryId = entryId.contains("-") ? entryId : entryId + "-0";
-  
-      // Get entries with IDs greater than the specified entry ID
-      TreeMap<String, List<String>> entries = new TreeMap<>(streamCache.getEntries().tailMap(entryId, false));
-  
-      outputStream.write("*1\r\n");
-      outputStream.write("*2\r\n"); // Stream key and its entries
-      outputStream.write("$" + streamKey.length() + "\r\n" + streamKey + "\r\n");
-      outputStream.write("*" + entries.size() + "\r\n");
-  
-      for (var entry : entries.entrySet()) {
+      
+      // Extract stream keys and entry IDs
+      List<String> streamKeys = arguments.subList(streamsIndex + 1, streamsIndex + 1 + (arguments.size() - streamsIndex - 1) / 2);
+      List<String> entryIds = arguments.subList(streamsIndex + 1 + streamKeys.size(), arguments.size());
+      
+      if (streamKeys.size() != entryIds.size()) {
+          // Mismatched stream keys and entry IDs
+          outputStream.write("-ERR Mismatched number of streams and IDs\r\n");
+          outputStream.flush();
+          return;
+      }
+      
+      // Start constructing the RESP response
+      outputStream.write("*" + streamKeys.size() + "\r\n");
+      
+      for (int i = 0; i < streamKeys.size(); i++) {
+          String streamKey = streamKeys.get(i);
+          String entryId = entryIds.get(i);
+          
+          StreamCache streamCache = streamMap.get(streamKey);
+          if (streamCache == null) {
+              outputStream.write("*2\r\n");
+              outputStream.write("$" + streamKey.length() + "\r\n" + streamKey + "\r\n");
+              outputStream.write("*0\r\n");
+              continue;
+          }
+          
+          entryId = entryId.contains("-") ? entryId : entryId + "-0";
+          
+          // Get entries with IDs greater than the specified entry ID
+          TreeMap<String, List<String>> entries = new TreeMap<>(streamCache.getEntries().tailMap(entryId, false));
+          
+          // Write stream key and entries
           outputStream.write("*2\r\n");
-          outputStream.write("$" + entry.getKey().length() + "\r\n" + entry.getKey() + "\r\n");
-          outputStream.write("*" + entry.getValue().size() + "\r\n");
-          for (String value : entry.getValue()) {
-              outputStream.write("$" + value.length() + "\r\n" + value + "\r\n");
+          outputStream.write("$" + streamKey.length() + "\r\n" + streamKey + "\r\n");
+          outputStream.write("*" + entries.size() + "\r\n");
+          
+          for (var entry : entries.entrySet()) {
+              outputStream.write("*2\r\n");
+              outputStream.write("$" + entry.getKey().length() + "\r\n" + entry.getKey() + "\r\n");
+              outputStream.write("*" + entry.getValue().size() + "\r\n");
+              for (String value : entry.getValue()) {
+                  outputStream.write("$" + value.length() + "\r\n" + value + "\r\n");
+              }
           }
       }
       
       outputStream.flush();
-  }  
+  }   
 }
